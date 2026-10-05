@@ -1,8 +1,8 @@
 """
 components/mock_interview.py
 Real Conversational AI Mock Interview with Live Microphone Speech-to-Text,
-Groq Whisper STT Fallback, Browser Text-to-Speech (TTS), Interview Camera Preview,
-Real-time Answer Evaluation, and Comprehensive Final Performance Report Card.
+Groq Whisper STT, Dynamic Multi-Turn Follow-Up Engine, Browser Text-to-Speech (TTS),
+Interview Camera Preview, and Comprehensive Final Performance Report Card.
 Styled after the clean, professional HireLens career platform visual aesthetic.
 """
 
@@ -11,6 +11,9 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 from services.interview_service import (
+    generate_initial_interview_question,
+    generate_conversational_followup,
+    generate_final_interview_evaluation,
     generate_interview_questions,
     evaluate_conversational_turn,
     generate_final_report
@@ -30,7 +33,7 @@ def render_mock_interview():
             Experience a real-time conversational AI interview powered by speech recognition and Groq LLM.
         </p>
         <p style="color:#64748B; font-size:0.8rem; font-style:italic;">
-            Speak naturally through your microphone &bull; Evaluated across technical correctness, communication, relevance, and completeness.
+            Dynamic follow-up questions adapt to your spoken answers in real time &bull; Natural conversation with full dialogue memory.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -90,11 +93,11 @@ def _render_setup():
             <div>
                 <div style="display:inline-flex; align-items:center; gap:6px; background:#ECFDF5; border:1px solid #A7F3D0;
                             padding:3px 12px; border-radius:14px; font-size:0.75rem; font-weight:700; color:#065F46; margin-bottom:0.4rem;">
-                    <span>✓</span> AI Conversational Mock Interview Setup
+                    <span>✓</span> True Live Conversational AI Interview
                 </div>
                 <h3 style="color:#0F241A; margin:0; font-size:1.45rem; font-weight:800;">Target Role: {role_hint}</h3>
                 <p style="color:#475569; font-size:0.92rem; margin:0.3rem 0 0;">
-                    Candidate: <strong>{cand_name}</strong> &bull; Personalized 5-Question Voice & AI Technical Session
+                    Candidate: <strong>{cand_name}</strong> &bull; Dynamic Adaptive Multi-Turn Interview Powered by Groq AI
                 </p>
             </div>
             <span style="background:{'#ECFDF5' if (has_resume and has_jd) else '#FFFBEB'};
@@ -173,7 +176,7 @@ def _render_setup():
         st.session_state["interview_tts_enabled"] = st.checkbox(
             "🔊 AI Voice Output (Spoken Audio)",
             value=st.session_state.get("interview_tts_enabled", True),
-            help="AI Interviewer speaks questions and feedback aloud using browser speech synthesis."
+            help="AI Interviewer speaks questions aloud using browser speech synthesis."
         )
     with col_cfg3:
         st.markdown("""
@@ -181,155 +184,116 @@ def _render_setup():
             🎤 Microphone Speech-to-Text: Active
         </div>
         <div style="font-size:0.75rem; color:#64748B;">
-            5 targeted questions tailored to your resume projects & role.
+            Dynamic follow-up engine: questions adapt to what you say.
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Launch Button ──────────────────────────────────────────────────────────
+    # ── Launch Button (Generates opening question only; no fixed list) ─────────
     can_start = has_resume and has_jd
     if st.button(
-        "🚀 Start AI Conversational Interview (5 Questions) →",
+        "🚀 Start Live Conversational AI Interview →",
         type="primary",
         disabled=not can_start,
         use_container_width=True,
         key="btn_start_mock_interview"
     ):
-        with st.spinner("🤖 Generating 5 personalized interview questions using Groq LLM..."):
-            questions, err = generate_interview_questions(
+        with st.spinner("🤖 AI Interviewer is reviewing your resume and formulating your opening question..."):
+            initial_q, err = generate_initial_interview_question(
                 resume_info=resume_info,
                 job_description=job_description,
-                num_questions=5,
-                missing_skills=st.session_state.get("skill_gaps", [])
+                target_role=role_hint
             )
 
-        if err or not questions:
-            st.error(f"❌ Failed to generate questions: {err or 'Unknown error'}")
+        if err or not initial_q:
+            st.error(f"❌ Failed to start interview: {err or 'Unknown error'}")
             return
 
-        st.session_state["interview_questions"] = questions
-        st.session_state["interview_current_q"] = 0
-        st.session_state["current_question"] = 0
+        # Initialize conversation state
+        st.session_state["conversation_history"] = [
+            {"role": "interviewer", "content": initial_q["question"]}
+        ]
+        st.session_state["current_question_data"] = initial_q
+        st.session_state["current_question_text"] = initial_q["question"]
+        st.session_state["current_question_category"] = initial_q.get("category", "Resume-Based")
+        st.session_state["current_question_focus"] = initial_q.get("focus_area", "Project Overview")
+        st.session_state["interview_turn"] = 1
         st.session_state["interview_answers"] = []
-        st.session_state["submitted_answers"] = []
         st.session_state["interview_evaluations"] = []
-        st.session_state["answer_evaluations"] = []
-        st.session_state["interview_substate"] = "answering"
-        st.session_state["current_evaluation"] = None
-        st.session_state["current_submitted_answer"] = ""
-        st.session_state["speech_transcript"] = ""
+        st.session_state["current_answer_draft"] = ""
+        st.session_state["last_acknowledgment"] = ""
         st.session_state["interview_started"] = True
         st.session_state["interview_completed"] = False
         st.session_state["interview_state"] = "interview"
         st.session_state["interview_start_time"] = time.time()
+        # Backwards-compatibility keys for legacy tests
+        st.session_state["interview_questions"] = [initial_q]
+        st.session_state["interview_current_q"] = 0
+        st.session_state["current_question"] = 0
         st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. ACTIVE CONVERSATIONAL INTERVIEW SCREEN
+# 2. ACTIVE LIVE CONVERSATIONAL INTERVIEW SCREEN
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_interview():
-    """Active conversational interview screen with voice microphone input, camera, and Groq evaluation."""
-    questions = st.session_state.get("interview_questions", [])
-    current_idx = st.session_state.get("interview_current_q", 0)
+    """
+    Active conversational interview screen:
+    - Real human-like interviewer with dialogue memory
+    - Live voice microphone recording via st.audio_input and Web Speech API
+    - Transcript automatically appears in editable answer field
+    - User reviews & submits with 'Submit Answer' (no auto-submit)
+    - Next follow-up is generated directly from candidate's answer
+    - End Interview available at any time to generate comprehensive report
+    """
+    conversation_history = st.session_state.get("conversation_history", [])
+    current_q_text = st.session_state.get("current_question_text", "")
+    current_category = st.session_state.get("current_question_category", "Technical")
+    current_focus = st.session_state.get("current_question_focus", "")
+    last_ack = st.session_state.get("last_acknowledgment", "")
+    turn = st.session_state.get("interview_turn", 1)
     evaluations = st.session_state.get("interview_evaluations", [])
     resume_info = st.session_state.get("resume_info", {})
     job_description = st.session_state.get("job_description") or st.session_state.get("global_job_description", "")
-    target_role = st.session_state.get("target_role", "Target Role")
-    total = len(questions) or 5
+    target_role = st.session_state.get("target_role", "AI/ML Software Engineer")
 
-    if not questions:
-        st.error("❌ No interview questions found.")
-        if st.button("Restart Interview"):
-            _reset_interview()
-        return
+    if not current_q_text:
+        # Fallback initialization if state was somehow cleared
+        initial_q, _ = generate_initial_interview_question(resume_info, job_description, target_role)
+        current_q_text = initial_q["question"]
+        st.session_state["current_question_text"] = current_q_text
+        if not conversation_history:
+            st.session_state["conversation_history"] = [{"role": "interviewer", "content": current_q_text}]
 
-    # Check if finished
-    if current_idx >= total:
-        st.session_state["interview_completed"] = True
-        st.session_state["interview_state"] = "report"
-        st.rerun()
-        return
+    # Top Status Bar
+    elapsed_sec = int(time.time() - st.session_state.get("interview_start_time", time.time()))
+    timer_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
 
-    # Progress bar
-    progress_val = current_idx / total
     st.markdown(f"""
-    <div style="margin-bottom:1.2rem;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:0.35rem;">
-            <span style="color:#0F241A; font-size:0.85rem; font-weight:700;">Question {current_idx + 1} of {total}</span>
-            <span style="color:#059669; font-size:0.85rem; font-weight:700;">{int(progress_val * 100)}% Complete</span>
+    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:0.75rem 1.25rem;
+                display:flex; justify-content:space-between; align-items:center; margin-bottom:1.2rem; box-shadow:0 1px 3px rgba(0,0,0,0.02); flex-wrap:wrap; gap:0.6rem;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; background:#ECFDF5; color:#059669; font-weight:800; font-size:0.85rem;">●</span>
+            <div>
+                <span style="font-weight:700; color:#0F241A; font-size:0.92rem;">Live Conversational AI Interview</span>
+                <span style="color:#64748B; font-size:0.82rem; margin-left:6px;">&bull; Role: <strong>{target_role}</strong></span>
+            </div>
         </div>
-        <div style="height:8px; background:#E2E8F0; border-radius:4px; overflow:hidden;">
-            <div style="width:{int(progress_val * 100)}%; height:100%; background:linear-gradient(90deg, #059669, #10B981);
-                        border-radius:4px; transition:width 0.3s;"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Check if reviewing evaluation
-    substate = st.session_state.get("interview_substate", "answering")
-    current_eval = st.session_state.get("current_evaluation")
-    submitted_ans = st.session_state.get("current_submitted_answer", "")
-
-    if substate == "reviewed" and current_eval:
-        _render_evaluation_review(
-            questions[current_idx], submitted_ans, current_eval, current_idx, total,
-            questions, evaluations, resume_info, job_description
-        )
-        return
-
-    # Current question
-    question_data = questions[current_idx]
-    question_text = question_data.get("question", "")
-    category = question_data.get("category", "Technical")
-    focus = question_data.get("focus_area", "")
-
-    # Spoken greeting on Q1
-    is_q1 = (current_idx == 0)
-    greeting_prefix = "Hi! Welcome to your JobShield AI mock interview. Let's begin. " if is_q1 else ""
-    full_spoken_prompt = f"{greeting_prefix}{question_text}"
-
-    # AI Interviewer Question Card
-    st.markdown(f"""
-    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:5px solid #059669;
-                border-radius:14px; padding:1.4rem 1.6rem; margin-bottom:1.3rem; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem;">
-            <span style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:0.75rem;
-                         font-weight:700; padding:3px 10px; border-radius:14px;">
-                {category}
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="background:#F0FDF4; border:1px solid #A7F3D0; color:#065F46; font-size:0.78rem; font-weight:700; padding:4px 12px; border-radius:14px;">
+                💬 Questions Discussed: {turn - 1}
             </span>
-            <span style="color:#64748B; font-size:0.8rem; font-weight:600;">Question {current_idx+1} of {total}</span>
+            <span style="background:#F8FAF9; border:1px solid #E2E8F0; color:#475569; font-size:0.78rem; font-weight:700; padding:4px 12px; border-radius:14px;">
+                ⏱️ {timer_str}
+            </span>
         </div>
-        <div style="color:#059669; font-size:0.8rem; font-weight:800; text-transform:uppercase; margin-bottom:0.35rem; display:flex; align-items:center; gap:6px;">
-            <span>🤖</span> AI Interviewer:
-        </div>
-        <div style="color:#0F241A; font-size:1.18rem; line-height:1.55; font-weight:700;">
-            "{full_spoken_prompt}"
-        </div>
-        {"<div style='color:#64748B; font-size:0.82rem; margin-top:0.4rem;'>Focus: " + focus + "</div>" if focus else ""}
     </div>
     """, unsafe_allow_html=True)
 
-    # Optional Browser Text-To-Speech (speaks question when enabled)
-    if st.session_state.get("interview_tts_enabled", True) and not st.session_state.get(f"q_spoken_{current_idx}", False):
-        safe_speech = full_spoken_prompt.replace('"', '\\"').replace('\n', ' ')
-        components.html(f"""
-        <script>
-        if ('speechSynthesis' in window) {{
-            window.speechSynthesis.cancel();
-            var utterance = new SpeechSynthesisUtterance("{safe_speech}");
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            window.speechSynthesis.speak(utterance);
-        }}
-        </script>
-        """, height=0)
-        st.session_state[f"q_spoken_{current_idx}"] = True
-
-    # ── Split Layout: Camera (Left) & Controls / Voice Input (Right) ───────────
-    cam_col, voice_col = st.columns([1, 1])
+    # ── Split Layout: Camera & Audio Settings (Left) | AI Question (Right) ─────
+    cam_col, q_col = st.columns([1, 1.3])
 
     with cam_col:
         st.markdown("""
@@ -337,7 +301,7 @@ def _render_interview():
             <span style="font-size:0.88rem; font-weight:700; color:#0F241A;">🎥 Interview Camera</span>
             <span style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:0.72rem;
                          font-weight:700; padding:2px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
-                <span style="color:#059669; font-size:0.65rem;">●</span> Visual Environment Active
+                <span style="color:#059669; font-size:0.65rem;">●</span> Visual Active
             </span>
         </div>
         """, unsafe_allow_html=True)
@@ -348,7 +312,7 @@ def _render_interview():
             components.html("""
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
                         background:#071A12; border-radius:12px; padding:6px; overflow:hidden;">
-                <video id="liveWebcamFeed" autoplay playsinline muted style="width:100%; max-height:220px; border-radius:8px; object-fit:cover;"></video>
+                <video id="liveWebcamFeed" autoplay playsinline muted style="width:100%; max-height:210px; border-radius:8px; object-fit:cover;"></video>
                 <div id="camStatus" style="color:#A7F3D0; font-family:sans-serif; font-size:11px; margin-top:4px;">
                     ● Live Camera Stream Active
                 </div>
@@ -369,14 +333,14 @@ def _render_interview():
                 document.getElementById('camStatus').innerHTML = 'Camera visual preview mode';
             }
             </script>
-            """, height=255)
+            """, height=245)
         else:
             st.markdown("""
-            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:2.5rem 1.2rem;
-                        text-align:center; min-height:180px; display:flex; flex-direction:column; justify-content:center;">
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:2.2rem 1.2rem;
+                        text-align:center; min-height:170px; display:flex; flex-direction:column; justify-content:center;">
                 <div style="font-size:2.2rem; margin-bottom:0.3rem;">🎙️</div>
-                <div style="font-size:0.95rem; font-weight:700; color:#0F241A;">Audio-Only Interview Mode</div>
-                <div style="font-size:0.8rem; color:#64748B; margin-top:0.2rem;">
+                <div style="font-size:0.92rem; font-weight:700; color:#0F241A;">Audio-Only Interview Mode</div>
+                <div style="font-size:0.78rem; color:#64748B; margin-top:0.2rem;">
                     Speak into your microphone or enter your response below.
                 </div>
             </div>
@@ -385,82 +349,110 @@ def _render_interview():
         col_cam1, col_cam2 = st.columns(2)
         with col_cam1:
             if not cam_enabled:
-                if st.button("📷 Start Camera", key=f"btn_cam_on_{current_idx}", use_container_width=True):
+                if st.button("📷 Start Camera", key=f"btn_cam_on_{turn}", use_container_width=True):
                     st.session_state["interview_camera_enabled"] = True
                     st.rerun()
             else:
-                if st.button("⏹️ Stop Camera", key=f"btn_cam_off_{current_idx}", use_container_width=True):
+                if st.button("⏹️ Stop Camera", key=f"btn_cam_off_{turn}", use_container_width=True):
                     st.session_state["interview_camera_enabled"] = False
                     st.rerun()
         with col_cam2:
             tts_on = st.session_state.get("interview_tts_enabled", True)
-            if st.button(f"{'🔊' if tts_on else '🔇'} Voice: {'ON' if tts_on else 'OFF'}", key=f"btn_toggle_tts_{current_idx}", use_container_width=True):
+            if st.button(f"{'🔊' if tts_on else '🔇'} Voice: {'ON' if tts_on else 'OFF'}", key=f"btn_toggle_tts_{turn}", use_container_width=True):
                 st.session_state["interview_tts_enabled"] = not tts_on
                 st.rerun()
 
-    with voice_col:
-        # Information & Guidelines
-        elapsed_sec = int(time.time() - st.session_state.get("interview_start_time", time.time()))
-        timer_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
-        skills_list = resume_info.get("skills", [])
-        skills_str = ", ".join(skills_list[:4]) if skills_list else "General AI/ML"
-
+    with q_col:
+        # ── AI Interviewer Question Card ───────────────────────────────────────
         st.markdown(f"""
-        <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:1.2rem;
-                    height:100%; box-shadow:0 1px 3px rgba(0,0,0,0.02); display:flex; flex-direction:column; justify-content:space-between;">
-            <div>
-                <div style="font-size:0.88rem; font-weight:700; color:#0F241A; margin-bottom:0.6rem; display:flex; align-items:center; gap:6px;">
-                    <span>🎤</span> Conversational Voice Controls
-                </div>
-                <div style="padding:0.5rem 0.8rem; background:#F8FAF9; border-radius:8px; border:1px solid #E2E8F0; margin-bottom:0.45rem;">
-                    <div style="font-size:0.68rem; color:#64748B; font-weight:700; text-transform:uppercase;">Role Focus</div>
-                    <div style="font-size:0.88rem; font-weight:700; color:#0F241A;">{target_role}</div>
-                </div>
-                <div style="padding:0.5rem 0.8rem; background:#F8FAF9; border-radius:8px; border:1px solid #E2E8F0; margin-bottom:0.45rem;">
-                    <div style="font-size:0.68rem; color:#64748B; font-weight:700; text-transform:uppercase;">Target Skills</div>
-                    <div style="font-size:0.82rem; font-weight:600; color:#059669;">{skills_str}</div>
-                </div>
-                <div style="display:flex; justify-content:space-between; gap:0.5rem;">
-                    <div style="flex:1; padding:0.45rem 0.7rem; background:#F8FAF9; border-radius:8px; border:1px solid #E2E8F0;">
-                        <div style="font-size:0.68rem; color:#64748B; font-weight:700; text-transform:uppercase;">Session</div>
-                        <div style="font-size:0.85rem; font-weight:700; color:#0F241A;">Q{current_idx+1} of {total}</div>
-                    </div>
-                    <div style="flex:1; padding:0.45rem 0.7rem; background:#ECFDF5; border-radius:8px; border:1px solid #A7F3D0;">
-                        <div style="font-size:0.68rem; color:#065F46; font-weight:700; text-transform:uppercase;">Timer</div>
-                        <div style="font-size:0.85rem; font-weight:800; color:#059669;">⏱️ {timer_str}</div>
-                    </div>
-                </div>
+        <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:5px solid #059669;
+                    border-radius:14px; padding:1.4rem 1.6rem; margin-bottom:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                <span style="background:#ECFDF5; color:#065F46; border:1px solid #A7F3D0; font-size:0.75rem;
+                             font-weight:700; padding:2px 10px; border-radius:12px;">
+                    {current_category}
+                </span>
+                <span style="color:#64748B; font-size:0.78rem; font-weight:600;">Question #{turn}</span>
             </div>
-            <div style="margin-top:0.6rem; font-size:0.75rem; color:#64748B; line-height:1.4;">
-                💡 <em>Speak clearly into your microphone using the STAR approach (Situation, Task, Action, Result).</em>
+            {f'''<div style="background:#F0FDF4; border:1px dashed #A7F3D0; border-radius:8px; padding:0.5rem 0.85rem; margin-bottom:0.75rem; font-size:0.86rem; color:#065F46; line-height:1.45;">
+                <strong style="color:#047857;">💬 AI Interviewer:</strong> "{last_ack}"
+            </div>''' if last_ack else ''}
+            <div style="color:#059669; font-size:0.8rem; font-weight:800; text-transform:uppercase; margin-bottom:0.35rem; display:flex; align-items:center; gap:6px;">
+                <span>🤖</span> AI Interviewer Question:
             </div>
+            <div style="color:#0F241A; font-size:1.18rem; line-height:1.55; font-weight:700;">
+                "{current_q_text}"
+            </div>
+            {f'<div style="color:#64748B; font-size:0.82rem; margin-top:0.45rem;">Focus: {current_focus}</div>' if current_focus else ''}
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Interactive Microphone Speech-to-Text Component ─────────────────────────
-    st.markdown("<div style='margin-top:1.2rem;'></div>", unsafe_allow_html=True)
+        # Spoken question TTS via browser speech synthesis
+        if st.session_state.get("interview_tts_enabled", True) and not st.session_state.get(f"q_spoken_{turn}", False):
+            safe_speech = current_q_text.replace('"', '\\"').replace('\n', ' ')
+            components.html(f"""
+            <script>
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                var utterance = new SpeechSynthesisUtterance("{safe_speech}");
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                window.speechSynthesis.speak(utterance);
+            }}
+            </script>
+            """, height=0)
+            st.session_state[f"q_spoken_{turn}"] = True
 
-    # Render HTML5 Web Speech Recognition tool
+    # ─────────────────────────────────────────────────────────────────────────
+    # YOUR ANSWER SECTION (Direct Voice-to-Text & Editable Answer Field)
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("<div style='margin-top:1.1rem;'></div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+        <div style="font-size:0.95rem; font-weight:800; color:#0F241A; display:flex; align-items:center; gap:6px;">
+            <span>✍️</span> YOUR ANSWER
+        </div>
+        <div style="font-size:0.75rem; color:#059669; font-weight:600;">
+            🎤 Microphone / Transcribe &rarr; Review &amp; Edit &rarr; Submit Answer
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 1. Native Streamlit Microphone Audio Input
+    # When user records and stops, Groq Whisper transcribes it and directly populates current_answer_draft!
+    audio_val = st.audio_input("🎤 Record Your Spoken Answer (Click mic, speak your answer, click stop)", key=f"audio_mic_{turn}")
+    if audio_val is not None and st.session_state.get(f"processed_audio_turn_{turn}") != audio_val:
+        with st.spinner("🤖 Groq Whisper is transcribing your speech..."):
+            transcript, stt_err = transcribe_audio_groq(audio_val)
+        if transcript:
+            st.session_state["current_answer_draft"] = transcript
+            st.session_state[f"processed_audio_turn_{turn}"] = audio_val
+            st.rerun()
+
+    # 2. HTML5 Web Speech Recognition Component (Browser-native real-time streaming speech-to-text)
+    # Streams live words into transcript box and directly syncs to the answer textarea
     components.html("""
-    <div style="background:#F0FDF4; border:1.5px solid #A7F3D0; border-radius:12px; padding:12px 16px; font-family:'Segoe UI', Tahoma, sans-serif;">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+    <div style="background:#F0FDF4; border:1.5px solid #A7F3D0; border-radius:12px; padding:10px 14px; font-family:'Segoe UI', Tahoma, sans-serif; margin-bottom:4px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
             <div style="display:flex; align-items:center; gap:8px;">
                 <button id="recBtn" onclick="toggleSpeech()" style="
                     background:linear-gradient(135deg, #059669, #10B981);
-                    color:#FFFFFF; border:none; border-radius:8px; padding:8px 16px;
-                    font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                    color:#FFFFFF; border:none; border-radius:8px; padding:7px 15px;
+                    font-size:12.5px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px;">
                     <span id="recIcon">🎤</span> <span id="recLabel">Start Speaking</span>
                 </button>
                 <span id="recStatus" style="font-size:12px; color:#065F46; font-weight:600;">
-                    Click to speak your answer
+                    Click to speak &bull; Live words sync directly to answer
                 </span>
             </div>
-            <button onclick="copyTranscript()" style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; color:#475569; font-weight:600;">
-                📋 Copy Text
+            <button onclick="applyToParent(document.getElementById('transcriptBox').innerText)" style="
+                background:#FFFFFF; border:1px solid #10B981; border-radius:6px; padding:5px 12px;
+                font-size:11.5px; cursor:pointer; color:#065F46; font-weight:700;">
+                ⬇️ Insert Transcript into Answer
             </button>
         </div>
-        <div id="transcriptBox" style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px; min-height:55px; max-height:110px; overflow-y:auto; font-size:13px; color:#1E293B; line-height:1.4;">
-            <em style="color:#94A3B8;">Your live spoken words will appear here in real-time...</em>
+        <div id="transcriptBox" style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:8px 10px; min-height:45px; max-height:85px; overflow-y:auto; font-size:13px; color:#1E293B; line-height:1.4;">
+            <em style="color:#94A3B8;">Live spoken words stream here in real-time...</em>
         </div>
     </div>
 
@@ -468,6 +460,33 @@ def _render_interview():
     var recognition = null;
     var isRecognizing = false;
     var finalTranscript = '';
+
+    function applyToParent(text) {
+        if (!text || !text.trim() || text.includes('Live spoken words stream')) return;
+        try {
+            var parentDoc = window.parent.document;
+            var textareas = parentDoc.querySelectorAll('textarea');
+            var targetTa = null;
+            for (var i = 0; i < textareas.length; i++) {
+                var ta = textareas[i];
+                if (ta.placeholder && (ta.placeholder.includes("spoken") || ta.placeholder.includes("typed") || ta.placeholder.includes("answer"))) {
+                    targetTa = ta;
+                    break;
+                }
+            }
+            if (!targetTa && textareas.length > 0) {
+                targetTa = textareas[textareas.length - 1];
+            }
+            if (targetTa) {
+                var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                nativeSetter.call(targetTa, text.trim());
+                targetTa.dispatchEvent(new Event('input', { bubbles: true }));
+                targetTa.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        } catch(e) {
+            console.warn("Frame update:", e);
+        }
+    }
 
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -496,19 +515,23 @@ def _render_interview():
             var display = (finalTranscript + interim).trim();
             if (display.length > 0) {
                 document.getElementById('transcriptBox').innerText = display;
+                applyToParent(display);
             }
         };
 
         recognition.onerror = function(event) {
-            document.getElementById('recStatus').innerText = 'Microphone error: ' + event.error;
+            document.getElementById('recStatus').innerText = 'Microphone status: ' + event.error;
             resetBtn();
         };
 
         recognition.onend = function() {
             resetBtn();
+            if (finalTranscript.trim()) {
+                applyToParent(finalTranscript.trim());
+            }
         };
     } else {
-        document.getElementById('recStatus').innerText = 'Speech recognition not supported in this browser. Use text input below.';
+        document.getElementById('recStatus').innerText = 'Web Speech not supported. Use the native microphone recorder above.';
     }
 
     function toggleSpeech() {
@@ -517,6 +540,7 @@ def _render_interview():
             recognition.stop();
             resetBtn();
         } else {
+            finalTranscript = '';
             try {
                 recognition.start();
             } catch(e) {
@@ -531,276 +555,208 @@ def _render_interview():
         document.getElementById('recLabel').innerText = 'Start Speaking';
         document.getElementById('recIcon').innerText = '🎤';
         document.getElementById('recBtn').style.background = 'linear-gradient(135deg, #059669, #10B981)';
-        document.getElementById('recStatus').innerText = 'Speech captured. Paste or edit below.';
-    }
-
-    function copyTranscript() {
-        var text = document.getElementById('transcriptBox').innerText;
-        navigator.clipboard.writeText(text).then(function() {
-            alert('Transcript copied to clipboard! Paste it into the Candidate Answer box below.');
-        });
+        document.getElementById('recStatus').innerText = 'Speech captured. Review & edit below.';
     }
     </script>
-    """, height=125)
+    """, height=110)
 
-    # ── Audio File / Voice Memo Upload Fallback (Groq Whisper STT) ─────────────
-    with st.expander("🎙️ Or Upload Recorded Voice Memo (Groq Whisper STT)", expanded=False):
-        st.caption("Upload a .wav, .mp3, or .m4a audio recording. Groq Whisper will transcribe it with high accuracy.")
-        voice_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a", "webm", "ogg"], key=f"voice_upload_q{current_idx}")
+    # 3. Audio File / Voice Memo Upload Fallback
+    with st.expander("📁 Or Upload Recorded Voice Memo (Groq Whisper STT)", expanded=False):
+        voice_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a", "webm", "ogg"], key=f"voice_upload_turn_{turn}")
         if voice_file is not None:
-            if st.button("Transcribe Voice Memo with Groq Whisper", key=f"btn_whisper_trans_{current_idx}"):
-                with st.spinner("🤖 Groq Whisper is transcribing your voice audio..."):
+            if st.button("Transcribe Voice File with Groq Whisper", key=f"btn_whisper_trans_{turn}"):
+                with st.spinner("🤖 Groq Whisper is transcribing voice audio..."):
                     transcript, t_err = transcribe_audio_groq(voice_file)
                 if t_err:
                     st.error(f"❌ {t_err}")
                 elif transcript:
-                    st.success("✓ Voice transcribed successfully!")
-                    st.session_state[f"answer_input_q{current_idx}"] = transcript
+                    st.success("✓ Voice transcribed successfully! Added to Answer field below.")
+                    st.session_state["current_answer_draft"] = transcript
                     st.rerun()
 
-    # ── Answer Input Area ──────────────────────────────────────────────────────
-    st.markdown("""
-    <div style="font-size:0.92rem; font-weight:700; color:#0F241A; margin:0.8rem 0 0.35rem;">
-        Candidate Answer (Spoken Transcript or Typed Response)
-    </div>
-    """, unsafe_allow_html=True)
-
-    answer = st.text_area(
+    # 4. Editable Answer Field (Transcript populates here automatically)
+    draft_val = st.session_state.get("current_answer_draft", "")
+    answer_text = st.text_area(
         "Candidate Answer Area",
-        height=140,
+        value=draft_val,
+        height=145,
         placeholder=(
-            "Your spoken or typed answer will appear here...\n\n"
-            "Example Structure (STAR Method):\n"
+            "Your spoken voice transcript or typed answer will appear directly here...\n\n"
+            "Review or edit your answer freely before submitting.\n"
             "• Situation: What project or problem were you working on?\n"
             "• Task: What was your specific technical objective?\n"
             "• Action: What tools, frameworks, and algorithms did you implement?\n"
-            "• Result: What quantifiable result or impact did you achieve?"
+            "• Result: What quantifiable outcome did you achieve?"
         ),
-        key=f"answer_input_q{current_idx}",
+        key=f"answer_text_area_{turn}",
         label_visibility="collapsed"
     )
 
-    # ── Clear Action Controls ──────────────────────────────────────────────────
-    col_act1, col_act2, col_act3 = st.columns([2, 1.2, 1.4])
+    # ── Action Controls: Submit Answer | Skip Question | End Interview ────────
+    col_act1, col_act2, col_act3 = st.columns([2, 1.1, 1.2])
 
     with col_act1:
-        submit_btn = st.button("➡️ Submit Answer & Get AI Feedback", type="primary", use_container_width=True, key=f"btn_sub_q{current_idx}")
+        submit_btn = st.button("➡️ Submit Answer", type="primary", use_container_width=True, key=f"btn_sub_turn_{turn}")
     with col_act2:
-        skip_btn = st.button("⏭️ Skip Question", use_container_width=True, key=f"btn_skip_q{current_idx}")
+        skip_btn = st.button("⏭️ Skip Topic", use_container_width=True, key=f"btn_skip_turn_{turn}")
     with col_act3:
-        if st.button("🏁 End Interview Early", use_container_width=True, key=f"btn_early_end_{current_idx}"):
-            st.session_state["interview_current_q"] = total
-            st.session_state["interview_completed"] = True
-            st.session_state["interview_state"] = "report"
-            st.rerun()
+        end_btn = st.button("🏁 End Interview", use_container_width=True, key=f"btn_end_turn_{turn}")
 
+    # Handle Answer Submission
     if submit_btn or skip_btn:
-        final_answer = answer.strip() if (submit_btn and answer and answer.strip()) else ""
+        final_answer = answer_text.strip() if (submit_btn and answer_text and answer_text.strip()) else ""
 
         if submit_btn and not final_answer:
-            st.warning("⚠️ Please speak into your microphone or type an answer, or click 'Skip Question' to proceed.")
+            st.warning("⚠️ Please speak into the microphone or type an answer, or click 'Skip Topic' to proceed.")
             return
 
-        is_last = (current_idx + 1 >= total)
-        planned_next = questions[current_idx + 1].get("question") if not is_last else None
+        submitted_payload = final_answer if submit_btn else "[Candidate skipped this question]"
 
-        with st.spinner("🤖 AI Interviewer is evaluating your answer and preparing next response..."):
-            evaluation, eval_error = evaluate_conversational_turn(
-                current_question=question_text,
-                candidate_answer=final_answer or "[Candidate skipped this question]",
+        # Append candidate response to conversation history
+        st.session_state["conversation_history"].append({
+            "role": "user",
+            "content": submitted_payload
+        })
+        st.session_state["interview_answers"].append(submitted_payload)
+
+        # AI listens, analyzes, and formulates the dynamic follow-up question
+        with st.spinner("🤖 AI Interviewer is analyzing your response and formulating the next follow-up..."):
+            followup, err = generate_conversational_followup(
+                conversation_history=st.session_state["conversation_history"],
+                latest_answer=submitted_payload,
                 resume_info=resume_info,
                 job_description=job_description,
-                question_num=current_idx + 1,
-                total_questions=total,
-                planned_next_question=planned_next
+                target_role=target_role
             )
 
-        if eval_error:
-            st.error(f"❌ Evaluation error: {eval_error}")
+        if err or not followup:
+            st.error(f"❌ Error generating follow-up: {err or 'Unknown error'}")
             return
 
-        st.session_state["current_evaluation"] = evaluation
-        st.session_state["current_submitted_answer"] = final_answer or "[Candidate skipped this question]"
-        st.session_state["interview_substate"] = "reviewed"
+        # Append interviewer's dynamic follow-up question to dialogue history
+        st.session_state["conversation_history"].append({
+            "role": "interviewer",
+            "content": followup["next_question"]
+        })
+        st.session_state["current_question_text"] = followup["next_question"]
+        st.session_state["current_question_category"] = followup.get("category", "Technical")
+        st.session_state["current_question_focus"] = followup.get("focus_area", "")
+        st.session_state["last_acknowledgment"] = followup.get("ai_acknowledgment", "")
+        st.session_state["interview_evaluations"].append(followup)
+        st.session_state["interview_turn"] = turn + 1
+        st.session_state["current_answer_draft"] = ""
+
+        # Update legacy keys for test compatibility
+        st.session_state["interview_questions"].append({
+            "id": turn + 1,
+            "question": followup["next_question"],
+            "category": followup.get("category", "Technical"),
+            "focus_area": followup.get("focus_area", "")
+        })
+        st.session_state["interview_current_q"] = turn
         st.rerun()
 
+    # Handle End Interview Action
+    if end_btn:
+        with st.spinner("📊 Synthesizing comprehensive final evaluation across entire interview transcript..."):
+            report, rep_err = generate_final_interview_evaluation(
+                conversation_history=conversation_history,
+                evaluations=evaluations,
+                resume_info=resume_info,
+                job_description=job_description,
+                target_role=target_role
+            )
+        if rep_err or not report:
+            # Fallback report
+            report, _ = generate_final_report(
+                questions=st.session_state.get("interview_questions", []),
+                evaluations=evaluations,
+                resume_info=resume_info,
+                job_description=job_description
+            )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. CONVERSATIONAL ANSWER EVALUATION REVIEW
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _render_evaluation_review(question_data: dict, submitted_ans: str, evaluation: dict,
-                              current_idx: int, total: int, questions: list,
-                              evaluations: list, resume_info: dict, job_description: str):
-    """Render conversational turn evaluation, spoken feedback, and next question transition."""
-    question_text = question_data.get("question", "")
-    category = question_data.get("category", "Technical")
-    score = evaluation.get("score", 6)
-
-    score_color = "#059669" if score >= 7 else ("#D97706" if score >= 5 else "#DC2626")
-    score_bg = "#ECFDF5" if score >= 7 else ("#FFFBEB" if score >= 5 else "#FEF2F2")
-    score_border = "#A7F3D0" if score >= 7 else ("#FDE68A" if score >= 5 else "#FECACA")
-
-    strengths = evaluation.get("strengths", [])
-    improvements = evaluation.get("improvements", [])
-    reply = evaluation.get("ai_conversational_reply", "")
-    speech_text = evaluation.get("speech_text", reply)
-    is_last = (current_idx + 1 >= total)
-
-    # Optional Browser Text-To-Speech for AI's spoken conversational reply
-    if st.session_state.get("interview_tts_enabled", True) and not st.session_state.get(f"ack_spoken_{current_idx}", False):
-        safe_speech = speech_text.replace('"', '\\"').replace('\n', ' ')
-        components.html(f"""
-        <script>
-        if ('speechSynthesis' in window) {{
-            window.speechSynthesis.cancel();
-            var utterance = new SpeechSynthesisUtterance("{safe_speech}");
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            window.speechSynthesis.speak(utterance);
-        }}
-        </script>
-        """, height=0)
-        st.session_state[f"ack_spoken_{current_idx}"] = True
-
-    # ── Conversational AI Response Box ─────────────────────────────────────────
-    st.markdown(f"""
-    <div style="background:#FFFFFF; border:1px solid #A7F3D0; border-left:5px solid #059669;
-                border-radius:14px; padding:1.4rem 1.6rem; margin-bottom:1.3rem; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
-            <div style="color:#059669; font-size:0.8rem; font-weight:800; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
-                <span>🤖</span> AI Interviewer Response:
-            </div>
-            <span style="font-size:0.75rem; color:#64748B; font-weight:600;">Question {current_idx+1} of {total}</span>
-        </div>
-        <div style="color:#0F241A; font-size:1.15rem; font-weight:700; line-height:1.55; margin-bottom:0.8rem;">
-            "{reply}"
-        </div>
-        <div style="background:#F8FAF9; border-left:3px solid #CBD5E1; border-radius:0 8px 8px 0; padding:0.6rem 0.8rem;">
-            <div style="font-size:0.7rem; color:#64748B; font-weight:700; text-transform:uppercase; margin-bottom:0.2rem;">
-                Your Answer:
-            </div>
-            <div style="color:#1E293B; font-size:0.88rem; font-style:italic; line-height:1.5;">
-                {submitted_ans}
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Score Banner ──────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div style="background:{score_bg}; border:1.5px solid {score_border}; border-radius:14px;
-                padding:1.2rem 1.4rem; margin-bottom:1.2rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
-            <div>
-                <div style="font-size:0.72rem; color:#64748B; font-weight:700; text-transform:uppercase;">Answer Evaluation Score</div>
-                <div style="font-size:2.4rem; font-weight:900; color:{score_color}; line-height:1.1; margin-top:0.15rem;">
-                    {score} <span style="font-size:1.1rem; font-weight:600; color:#64748B;">/ 10</span>
-                </div>
-            </div>
-            <div style="flex:1; max-width:350px;">
-                <div style="height:9px; background:#E2E8F0; border-radius:5px; overflow:hidden;">
-                    <div style="width:{score * 10}%; height:100%; background:{score_color}; border-radius:5px;"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Strengths & Improvements (Short & Punchy) ──────────────────────────────
-    col_str, col_imp = st.columns(2)
-
-    with col_str:
-        st.markdown("""
-        <h4 style="font-size:0.95rem; font-weight:700; color:#065F46; margin-bottom:0.4rem;">
-            ✓ Strengths
-        </h4>
-        """, unsafe_allow_html=True)
-        if strengths:
-            for s in strengths:
-                st.markdown(f"""
-                <div style="display:flex; gap:0.5rem; align-items:flex-start; margin-bottom:0.35rem;
-                            padding:0.5rem 0.75rem; background:#ECFDF5; border-radius:8px; border:1px solid #A7F3D0;">
-                    <span style="color:#059669; font-weight:700;">✓</span>
-                    <span style="color:#065F46; font-size:0.85rem;">{s}</span>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("Answer recorded.")
-
-    with col_imp:
-        st.markdown("""
-        <h4 style="font-size:0.95rem; font-weight:700; color:#92400E; margin-bottom:0.4rem;">
-            💡 Areas to Improve
-        </h4>
-        """, unsafe_allow_html=True)
-        if improvements:
-            for imp in improvements:
-                st.markdown(f"""
-                <div style="display:flex; gap:0.5rem; align-items:flex-start; margin-bottom:0.35rem;
-                            padding:0.5rem 0.75rem; background:#FFFBEB; border-radius:8px; border:1px solid #FDE68A;">
-                    <span style="color:#D97706; font-weight:700;">&rarr;</span>
-                    <span style="color:#92400E; font-size:0.85rem;">{imp}</span>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No major improvements needed.")
-
-    st.markdown("<div style='margin-top:1.4rem;'></div>", unsafe_allow_html=True)
-
-    # ── Next Question / Finish Action ──────────────────────────────────────────
-    next_btn_label = "🎉 Complete Interview & View Final Performance Report ➡️" if is_last else f"➡️ Continue to Next Question ({current_idx+2}/{total})"
-
-    if st.button(next_btn_label, type="primary", use_container_width=True, key="btn_next_question_flow"):
-        answers = st.session_state.get("interview_answers", [])
-        answers.append(submitted_ans)
-        evals_list = st.session_state.get("interview_evaluations", [])
-        evals_list.append(evaluation)
-
-        st.session_state["interview_answers"] = answers
-        st.session_state["submitted_answers"] = answers
-        st.session_state["interview_evaluations"] = evals_list
-        st.session_state["answer_evaluations"] = evals_list
-
-        next_q = current_idx + 1
-        st.session_state["interview_current_q"] = next_q
-        st.session_state["current_question"] = next_q
-        st.session_state["current_evaluation"] = None
-        st.session_state["current_submitted_answer"] = ""
-        st.session_state["interview_substate"] = "answering"
-
-        if is_last:
-            with st.spinner("📊 Synthesizing comprehensive final interview report..."):
-                report, error = generate_final_report(questions, evals_list, resume_info, job_description)
-                if not error and report:
-                    st.session_state["interview_report"] = report
-                    st.session_state["final_interview_report"] = report
-                    st.session_state["final_interview_score"] = report.get("overall_score", 0)
-                    st.session_state["interview_completed"] = True
-                    st.session_state["interview_state"] = "report"
-
+        st.session_state["interview_report"] = report
+        st.session_state["final_interview_report"] = report
+        st.session_state["final_interview_score"] = report.get("overall_score", 0)
+        st.session_state["interview_completed"] = True
+        st.session_state["interview_state"] = "report"
         st.rerun()
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # 3. INTERVIEW CONVERSATION (Complete Transparent Dialogue History)
+    # ─────────────────────────────────────────────────────────────────────────
+    if conversation_history:
+        st.markdown("<div style='margin-top:2rem;'></div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="font-size:0.95rem; font-weight:800; color:#0F241A; margin-bottom:0.8rem; display:flex; align-items:center; gap:6px;">
+            <span>💬</span> INTERVIEW CONVERSATION TRANSCRIPT
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.container():
+            # Render chronological dialogue bubbles
+            turn_counter = 1
+            for i, msg in enumerate(conversation_history):
+                role = msg.get("role")
+                content = msg.get("content", "")
+
+                if role in ["interviewer", "assistant"]:
+                    st.markdown(f"""
+                    <div style="background:#F0FDF4; border:1px solid #A7F3D0; border-left:4px solid #059669;
+                                border-radius:12px; padding:0.9rem 1.2rem; margin-bottom:0.6rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+                            <span style="font-size:0.75rem; font-weight:800; color:#065F46; text-transform:uppercase;">
+                                🤖 AI Interviewer
+                            </span>
+                            <span style="font-size:0.7rem; color:#64748B;">Turn {turn_counter}</span>
+                        </div>
+                        <div style="color:#0F241A; font-size:0.94rem; line-height:1.5; font-weight:600;">
+                            {content}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:4px solid #3B82F6;
+                                border-radius:12px; padding:0.9rem 1.2rem; margin-bottom:0.6rem; margin-left:1.5rem;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+                            <span style="font-size:0.75rem; font-weight:800; color:#1D4ED8; text-transform:uppercase;">
+                                👤 You (Candidate)
+                            </span>
+                        </div>
+                        <div style="color:#334155; font-size:0.92rem; line-height:1.5;">
+                            {content}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    turn_counter += 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. FINAL INTERVIEW REPORT CARD (AFTER 5 QUESTIONS)
+# 4. FINAL INTERVIEW PERFORMANCE REPORT CARD
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_final_report():
-    """Render comprehensive report card after completing all 5 questions."""
+    """Render comprehensive report card synthesizing the entire conversational interview transcript."""
     report = st.session_state.get("interview_report") or st.session_state.get("final_interview_report", {})
-    questions = st.session_state.get("interview_questions", [])
+    conversation_history = st.session_state.get("conversation_history", [])
     evaluations = st.session_state.get("interview_evaluations", [])
 
     if not report:
-        st.error("❌ No report available. Please complete interview first.")
+        st.error("❌ No report available. Please complete an interview first.")
         return
 
     overall = report.get("overall_score", 0)
     category_scores = report.get("category_scores", {})
+    tech_score = report.get("technical_knowledge", category_scores.get("Technical Knowledge", overall))
+    comm_score = report.get("communication", category_scores.get("Communication", overall))
+    rel_score = report.get("relevance", category_scores.get("Relevance", overall))
+    comp_score = report.get("completeness", category_scores.get("Completeness", overall))
+    ps_score = report.get("problem_solving", category_scores.get("Problem Solving", overall))
+
     strong_areas = report.get("strong_areas", [])
     improvement_areas = report.get("improvement_areas", [])
-    recommendations = report.get("recommendations", [])
+    recommendations = report.get("topics_to_practice", report.get("recommendations", []))
     final_feedback = report.get("final_feedback", "")
 
     perf_label = "Excellent Match" if overall >= 80 else ("Good Candidate Alignment" if overall >= 65 else ("Fair Alignment" if overall >= 50 else "Needs Preparation"))
@@ -816,7 +772,7 @@ def _render_final_report():
             INTERVIEW COMPLETED
         </h2>
         <div style="font-size:0.9rem; color:#64748B; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">
-            Overall Score: {overall}/100
+            Overall Performance Score: {overall}/100
         </div>
         <div style="font-size:4.6rem; font-weight:900; color:{perf_color}; line-height:1; margin:0.4rem 0;">
             {overall}%
@@ -828,30 +784,31 @@ def _render_final_report():
             <div style="width:{overall}%; height:100%; background:{perf_color}; border-radius:5px;"></div>
         </div>
         <div style="color:#64748B; font-size:0.85rem; margin-top:0.8rem;">
-            Based on {len(evaluations)} detailed question evaluations and candidate responses
+            Based on {len(conversation_history) // 2} interactive dialogue turns synthesized by Groq AI
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 4 Category Scores: Technical, Communication, Relevance, Completeness
-    cat_cols = st.columns(4)
-    cat_order = [
-        ("Technical Score", category_scores.get("Technical Knowledge", overall)),
-        ("Communication Score", category_scores.get("Communication", overall)),
-        ("Relevance Score", category_scores.get("Job Relevance", overall)),
-        ("Completeness Score", category_scores.get("Resume Knowledge", overall)),
+    # 5 Performance Pillar Cards
+    pillars = [
+        ("Technical Knowledge", tech_score),
+        ("Communication", comm_score),
+        ("Relevance", rel_score),
+        ("Completeness", comp_score),
+        ("Problem Solving", ps_score),
     ]
 
-    for col, (cat_name, cat_score) in zip(cat_cols, cat_order):
-        c_color = "#059669" if cat_score >= 75 else ("#D97706" if cat_score >= 55 else "#DC2626")
+    cols = st.columns(5)
+    for col, (p_name, p_score) in zip(cols, pillars):
+        c_color = "#059669" if p_score >= 75 else ("#D97706" if p_score >= 55 else "#DC2626")
         with col:
             st.markdown(f"""
             <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px;
-                        padding:1.1rem 0.8rem; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
-                <div style="font-size:1.8rem; font-weight:900; color:{c_color};">{cat_score}%</div>
-                <div style="color:#0F241A; font-size:0.82rem; font-weight:700; margin-top:0.3rem;">{cat_name}</div>
-                <div style="height:6px; background:#F1F5F9; border-radius:3px; margin-top:0.6rem; overflow:hidden;">
-                    <div style="width:{cat_score}%; height:100%; background:{c_color}; border-radius:3px;"></div>
+                        padding:1rem 0.6rem; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+                <div style="font-size:1.7rem; font-weight:900; color:{c_color};">{p_score}%</div>
+                <div style="color:#0F241A; font-size:0.78rem; font-weight:700; margin-top:0.3rem;">{p_name}</div>
+                <div style="height:6px; background:#F1F5F9; border-radius:3px; margin-top:0.55rem; overflow:hidden;">
+                    <div style="width:{p_score}%; height:100%; background:{c_color}; border-radius:3px;"></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -864,7 +821,7 @@ def _render_final_report():
         <div style="background:#FFFFFF; border:1px solid #A7F3D0; border-left:4px solid #059669;
                     border-radius:12px; padding:1.2rem 1.4rem; margin-bottom:1.4rem; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
             <div style="font-weight:700; color:#065F46; font-size:0.95rem; margin-bottom:0.35rem;">
-                🎯 Interview Summary & AI Feedback
+                🎯 Executive Interview Summary &amp; Coaching Feedback
             </div>
             <div style="color:#1E293B; font-size:0.9rem; line-height:1.6;">
                 {final_feedback}
@@ -878,7 +835,7 @@ def _render_final_report():
     with sa_col:
         st.markdown("""
         <h4 style="font-size:1rem; font-weight:700; color:#065F46; margin-bottom:0.5rem;">
-            ★ Strong Areas
+            ★ Key Strengths
         </h4>
         """, unsafe_allow_html=True)
 
@@ -907,12 +864,12 @@ def _render_final_report():
             </div>
             """, unsafe_allow_html=True)
 
-    # Recommended Skills to Practice
+    # Recommended Topics to Practice
     if recommendations:
         st.markdown("<div style='margin-top:1.4rem;'></div>", unsafe_allow_html=True)
         st.markdown("""
         <h4 style="font-size:1rem; font-weight:700; color:#0F241A; margin-bottom:0.5rem;">
-            📚 Recommended Skills to Practice
+            📚 Recommended Topics to Practice
         </h4>
         """, unsafe_allow_html=True)
 
@@ -932,7 +889,7 @@ def _render_final_report():
     btn1, btn2, btn3 = st.columns(3)
 
     with btn1:
-        if st.button("🔄 Restart Interview", type="primary", use_container_width=True, key="btn_restart_interview_final"):
+        if st.button("🔄 Start New Interview Session", type="primary", use_container_width=True, key="btn_restart_interview_final"):
             _reset_interview()
 
     with btn2:
@@ -956,13 +913,15 @@ def _reset_interview():
         "interview_scores", "submitted_answers", "answer_evaluations",
         "interview_report", "final_interview_report", "current_evaluation",
         "current_submitted_answer", "interview_start_time", "interview_started",
-        "interview_completed", "speech_transcript"
+        "interview_completed", "speech_transcript", "conversation_history",
+        "current_question_text", "current_question_category", "current_question_focus",
+        "last_acknowledgment", "interview_turn", "current_answer_draft"
     ]
     for k in keys_to_reset:
         st.session_state.pop(k, None)
-    # Clear spoken tracker keys
+    # Clear spoken tracker keys and audio keys
     for k in list(st.session_state.keys()):
-        if k.startswith("q_spoken_") or k.startswith("ack_spoken_") or k.startswith("answer_input_q"):
+        if any(k.startswith(p) for p in ["q_spoken_", "ack_spoken_", "answer_input_q", "answer_text_area_", "audio_mic_", "processed_audio_"]):
             st.session_state.pop(k, None)
 
     st.session_state["interview_state"] = "setup"

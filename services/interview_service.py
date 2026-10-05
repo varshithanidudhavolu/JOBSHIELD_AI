@@ -108,6 +108,7 @@ Rules:
     return questions[:num_questions], None
 
 
+
 def _generate_fallback_questions(resume_info: dict, job_description: str, num: int) -> list:
     """Personalized fallback questions when Groq API is unavailable."""
     skills = resume_info.get("skills", [])
@@ -144,28 +145,235 @@ def _generate_fallback_questions(resume_info: dict, job_description: str, num: i
             "question": f"In your work with {skills[1] if len(skills) > 1 else 'data engineering'}, how did you ensure data quality and validation?",
             "category": "Technical",
             "focus_area": "Data engineering and validation"
-        },
-        {
-            "id": 6,
-            "question": "How do you evaluate whether a complex AI solution (like an LLM or deep model) is necessary compared to a simpler heuristic or baseline?",
-            "category": "Technical",
-            "focus_area": "Pragmatic engineering judgment"
-        },
-        {
-            "id": 7,
-            "question": "Where do you see yourself contributing most to our engineering team in the first 90 days?",
-            "category": "Job-Specific",
-            "focus_area": "Team impact and onboarding"
-        },
-        {
-            "id": 8,
-            "question": "Why does this specific role align with your long-term career aspirations in AI and software engineering?",
-            "category": "HR",
-            "focus_area": "Motivation and culture fit"
         }
     ]
-
     return questions[:num]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic Conversational Interview Engine (No Pre-Generated Fixed Sequence)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_initial_interview_question(resume_info: dict, job_description: str = "",
+                                        target_role: str = "") -> tuple[dict, str | None]:
+    """
+    Generate the FIRST opening interview question tailored specifically to the candidate's
+    featured resume project, skills, and target role.
+    
+    Returns:
+        (question_dict, error_message)
+    """
+    name = (resume_info.get("name") if resume_info else None) or "Candidate"
+    skills = (resume_info.get("skills") if resume_info else []) or ["Python", "Machine Learning"]
+    projects = (resume_info.get("projects") if resume_info else []) or []
+    first_proj = projects[0] if projects else None
+    role = target_role or "AI/ML Software Engineer"
+
+    system_prompt = """You are a seasoned hiring manager and lead technical interviewer.
+Craft a warm, professional, and personalized opening interview question.
+Reference the candidate's actual projects or skills. Never generate a generic placeholder.
+Return valid JSON only."""
+
+    prompt = f"""Generate the OPENING (First) interview question for this candidate:
+
+CANDIDATE:
+Name: {name}
+Target Role: {role}
+Featured Project: {first_proj or "Not specified"}
+All Projects: {', '.join(projects[:3]) if projects else "None listed"}
+Key Skills: {', '.join(skills[:8])}
+
+TARGET JOB DESCRIPTION:
+{truncate_text(job_description, 1000) if job_description else "General AI/ML Engineering position"}
+
+INSTRUCTIONS:
+1. Open warmly and invite the candidate to dive into their most impressive project or technical experience.
+2. If they have a project like '{first_proj}', ask them to explain its objective, architecture, and technology stack.
+3. Return JSON in this exact structure:
+{{
+  "question": "The actual spoken opening question text",
+  "category": "Resume-Based" or "Technical",
+  "focus_area": "Project Architecture & Core Technical Problem"
+}}
+"""
+
+    response, error = call_groq(prompt, system_prompt, max_tokens=400, temperature=0.5)
+    parsed = parse_json_from_llm(response) if response else None
+
+    if parsed and isinstance(parsed, dict) and parsed.get("question"):
+        return {
+            "id": 1,
+            "question": parsed["question"].strip(),
+            "category": parsed.get("category", "Resume-Based"),
+            "focus_area": parsed.get("focus_area", "Project Overview")
+        }, None
+
+    # Fallback opening question referencing actual candidate project
+    if first_proj:
+        q_text = f"Welcome! To start our interview, could you walk me through your '{first_proj}' project? What was the core problem you were solving, and what architecture and technologies did you choose?"
+    else:
+        top_skill = skills[0] if skills else "Python"
+        q_text = f"Welcome! To start our interview for the {role} position, could you walk me through a complex technical system or model you built recently using {top_skill}?"
+
+    return {
+        "id": 1,
+        "question": q_text,
+        "category": "Resume-Based",
+        "focus_area": "Technical Architecture & Problem Solving"
+    }, None
+
+
+def generate_conversational_followup(
+    conversation_history: list[dict],
+    latest_answer: str,
+    resume_info: dict,
+    job_description: str = "",
+    target_role: str = ""
+) -> tuple[dict, str | None]:
+    """
+    True Live Conversational Interview Engine:
+    Listens carefully to the candidate's answer, identifies key technologies, claims,
+    architectural decisions, and statements, and generates a dynamic follow-up question
+    derived directly from what the candidate said.
+    
+    Remembers the entire conversation history.
+    
+    Returns:
+        (result_dict, error_message)
+    """
+    clean_ans = (latest_answer or "").strip()
+    is_skipped = not clean_ans or clean_ans == "[Candidate skipped this question]"
+
+    if is_skipped:
+        # Candidate skipped this topic - pivot naturally
+        projects = resume_info.get("projects", []) if resume_info else []
+        skills = resume_info.get("skills", []) if resume_info else []
+        turn_num = len(conversation_history) // 2 + 1
+        return {
+            "ai_acknowledgment": "No problem, let's pivot to a different topic.",
+            "next_question": f"Let's talk about another area on your profile. How have you utilized {skills[turn_num % len(skills)] if skills else 'system design principles'} in your projects?",
+            "category": "Technical",
+            "focus_area": "Alternative Technical Skill",
+            "turn_score": 3,
+            "turn_strengths": ["Candidate navigated forward in the interview."],
+            "turn_improvements": ["Prepare concise STAR-format summaries even for less familiar topics."]
+        }, None
+
+    # Format entire dialogue history for multi-turn conversational context
+    history_transcript = []
+    for turn in conversation_history:
+        speaker = "Interviewer" if turn.get("role") in ["interviewer", "assistant"] else "Candidate"
+        history_transcript.append(f"{speaker}: {turn.get('content', '')}")
+    history_str = "\n".join(history_transcript[-8:])  # Keep up to last 8 turns for depth
+
+    system_prompt = """You are a professional human-like interviewer conducting a live technical interview.
+Do not follow a fixed question list.
+Listen carefully to the candidate's answer.
+Identify important technologies, claims, projects, decisions, and statements in the answer.
+Ask a relevant follow-up question based on what the candidate actually said.
+If the answer is incomplete, ask a clarification question.
+If the answer is strong, increase the difficulty naturally.
+If the answer is weak, ask a simpler probing question.
+Maintain context throughout the conversation.
+Do not repeat questions.
+Do not ask unrelated questions.
+The interview should feel like a natural conversation rather than a questionnaire."""
+
+    role = target_role or "AI/ML Software Engineer"
+    skills = resume_info.get("skills", []) if resume_info else []
+    projects = resume_info.get("projects", []) if resume_info else []
+
+    prompt = f"""You are actively conducting this live interview for the role of {role}.
+
+CANDIDATE CONTEXT:
+Key Skills: {', '.join(skills[:8])}
+Resume Projects: {', '.join(projects[:3]) if projects else 'Technical Projects'}
+Target Job Context: {truncate_text(job_description, 600) if job_description else role}
+
+ENTIRE CONVERSATION HISTORY SO FAR:
+{history_str}
+
+CANDIDATE'S LATEST SUBMITTED ANSWER:
+"{truncate_text(clean_ans, 1800)}"
+
+YOUR TASK AS THE INTERVIEWER:
+1. Identify specific technologies, libraries, algorithms, metrics, or architectural decisions the candidate explicitly named (e.g. ChromaDB, RAG, Random Forest, Docker, Streamlit, retrieval accuracy, latency, etc.).
+2. Craft a brief, natural AI acknowledgment (1-2 sentences) directly referencing what they stated.
+3. Formulate the NEXT dynamic follow-up question probing deeper into that specific claim or decision.
+   - Example 1: If candidate said "I used ChromaDB and Groq", ask: "You mentioned ChromaDB. Why did you choose ChromaDB for your vector database over alternatives like FAISS or Pinecone?"
+   - Example 2: If candidate said "Random forest reduces overfitting", ask: "You mentioned Random Forest reduces overfitting. Can you explain how the ensemble mechanism and bagging achieve that?"
+   - Example 3: If candidate said "I built a RAG pipeline", ask: "How did you measure retrieval accuracy, and how did you prevent hallucinations in your generated answers?"
+4. Ensure the follow-up question is natural, conversational, and directly connected to what they just said.
+5. Provide a quick objective turn score (1-10), strengths, and improvements for the final report.
+
+Return JSON in this EXACT structure:
+{{
+  "ai_acknowledgment": "Brief 1-2 sentence acknowledgment directly referencing what they explained (e.g. 'Good explanation. You highlighted using ChromaDB for semantic retrieval...').",
+  "next_question": "The dynamic follow-up question derived directly from their answer.",
+  "category": "Technical" or "Project-Based" or "Problem-Solving" or "Behavioral",
+  "focus_area": "What the follow-up probes (e.g. Vector Database Tradeoffs)",
+  "turn_score": <integer 1-10>,
+  "turn_strengths": [
+    "Specific positive technical point from their answer"
+  ],
+  "turn_improvements": [
+    "One constructive improvement or missing technical detail"
+  ]
+}}
+"""
+
+    response, error = call_groq(prompt, system_prompt, max_tokens=850, temperature=0.35)
+    parsed = parse_json_from_llm(response) if response else None
+
+    if parsed and isinstance(parsed, dict) and parsed.get("next_question"):
+        def clamp_score(v, default=6):
+            try:
+                return max(1, min(10, int(v)))
+            except Exception:
+                return default
+
+        return {
+            "ai_acknowledgment": parsed.get("ai_acknowledgment", "Thank you for explaining that.").strip(),
+            "next_question": parsed.get("next_question", "").strip(),
+            "category": parsed.get("category", "Technical"),
+            "focus_area": parsed.get("focus_area", "Follow-up Probe"),
+            "turn_score": clamp_score(parsed.get("turn_score", 6)),
+            "turn_strengths": parsed.get("turn_strengths", ["Provided clear technical response to the question."]),
+            "turn_improvements": parsed.get("turn_improvements", ["Deepen explanation with quantifiable metrics."])
+        }, None
+
+    # Heuristic dynamic fallback: Extract keywords from answer
+    lower_ans = clean_ans.lower()
+    if "rag" in lower_ans or "chroma" in lower_ans or "vector" in lower_ans or "retrieval" in lower_ans:
+        ack = "You mentioned using retrieval mechanisms in your architecture."
+        next_q = "How did you handle chunking strategies and irrelevant or hallucinated responses in your retrieval pipeline?"
+        focus = "RAG Pipeline Robustness"
+    elif "random forest" in lower_ans or "tree" in lower_ans or "classification" in lower_ans:
+        ack = "Good point regarding tree-based ensemble methods."
+        next_q = "How did you tune hyperparameters like tree depth and handle class imbalance in your training dataset?"
+        focus = "Model Tuning & Imbalance"
+    elif "streamlit" in lower_ans or "fastapi" in lower_ans or "api" in lower_ans or "docker" in lower_ans:
+        ack = "Thanks for walking through your deployment and interface stack."
+        next_q = "How did you manage application state, latency, and concurrency under multiple concurrent users?"
+        focus = "Deployment & Scalability"
+    elif "pytorch" in lower_ans or "tensorflow" in lower_ans or "neural" in lower_ans or "deep" in lower_ans:
+        ack = "Solid overview of your deep learning pipeline."
+        next_q = "What loss functions and optimization strategies did you utilize, and how did you prevent gradient issues?"
+        focus = "Deep Learning Optimization"
+    else:
+        ack = "Thanks for walking me through that technical perspective."
+        next_q = "Can you elaborate on a specific performance metric or trade-off you evaluated when validating that system?"
+        focus = "Technical Trade-offs & Validation"
+
+    return {
+        "ai_acknowledgment": ack,
+        "next_question": next_q,
+        "category": "Technical",
+        "focus_area": focus,
+        "turn_score": max(4, min(9, len(clean_ans.split()) // 15 + 3)),
+        "turn_strengths": ["Candidate articulated project context and key tools."],
+        "turn_improvements": ["Elaborate further on quantifiable outcomes and architectural tradeoffs."]
+    }, None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -548,3 +756,186 @@ Return ONLY valid JSON."""
     }
 
     return report, None
+
+
+def generate_final_interview_evaluation(
+    conversation_history: list[dict],
+    evaluations: list[dict],
+    resume_info: dict,
+    job_description: str = "",
+    target_role: str = ""
+) -> tuple[dict, str | None]:
+    """
+    Comprehensive End-of-Interview Evaluation synthesizing the ENTIRE conversational transcript:
+    - Overall Score (0-100%)
+    - Technical Knowledge (0-100%)
+    - Communication (0-100%)
+    - Relevance (0-100%)
+    - Completeness (0-100%)
+    - Problem Solving (0-100%)
+    - Strengths (Key technical achievements & articulate explanations)
+    - Areas to Improve (Prioritized growth targets)
+    - Topics to Practice (Specific concepts & systems to prepare)
+    - Personalized Feedback (Executive interview summary)
+    """
+    if not conversation_history and not evaluations:
+        return {}, "No conversation history available to evaluate."
+
+    # Format entire dialogue
+    dialogue_lines = []
+    for turn in conversation_history:
+        speaker = "Interviewer" if turn.get("role") in ["interviewer", "assistant"] else "Candidate"
+        dialogue_lines.append(f"{speaker}: {turn.get('content', '')}")
+    dialogue_str = "\n".join(dialogue_lines)
+
+    # Turn scores fallback calculation
+    scores = [e.get("turn_score", e.get("score", 6)) for e in evaluations]
+    avg_score = sum(scores) / len(scores) if scores else 6.0
+    overall_pct = int(min(100, max(20, (avg_score / 10.0) * 100)))
+
+    role = target_role or "AI/ML Software Engineer"
+    skills = resume_info.get("skills", []) if resume_info else []
+
+    system_prompt = """You are an executive technical interview evaluator and principal hiring director.
+Analyze the candidate's entire multi-turn technical interview conversation comprehensively and objectively.
+Return ONLY valid JSON."""
+
+    prompt = f"""Conduct a comprehensive final evaluation of this complete technical interview for {role}:
+
+CANDIDATE SKILLS: {', '.join(skills[:10])}
+TARGET JOB CONTEXT: {truncate_text(job_description, 500) if job_description else role}
+
+COMPLETE INTERVIEW CONVERSATION TRANSCRIPT:
+{truncate_text(dialogue_str, 4500)}
+
+EVALUATION RUBRIC:
+1. Overall Score (0-100%): Synthesized assessment of readiness for this role.
+2. Pillar Scores (0-100% each):
+   - technical_knowledge: Depth, correctness, and architecture awareness.
+   - communication: Clarity, structure, articulation, and conciseness.
+   - relevance: How directly answers addressed the questions asked.
+   - completeness: Full explanations with tools, methods, and outcomes.
+   - problem_solving: Analytical thinking, tradeoff analysis, and engineering judgment.
+3. Strengths: 3-5 concrete positive points demonstrated during this conversation.
+4. Areas to Improve: 3-4 prioritized technical or communication weaknesses to address.
+5. Topics to Practice: 3-4 specific topics, tools, or architectural concepts to study.
+6. Personalized Feedback: 3-4 sentences of constructive executive coaching.
+
+Return JSON in this EXACT structure:
+{{
+  "overall_score": <integer 0-100>,
+  "technical_knowledge": <integer 0-100>,
+  "communication": <integer 0-100>,
+  "relevance": <integer 0-100>,
+  "completeness": <integer 0-100>,
+  "problem_solving": <integer 0-100>,
+  "strengths": [
+    "Specific strength with examples from their answers"
+  ],
+  "improvement_areas": [
+    "Prioritized area for improvement"
+  ],
+  "topics_to_practice": [
+    "Specific concept or technology to practice"
+  ],
+  "personalized_feedback": "3-4 sentences summarizing their interview performance and readiness."
+}}
+"""
+
+    response, error = call_groq(prompt, system_prompt, max_tokens=1400, temperature=0.35)
+    parsed = parse_json_from_llm(response) if response else None
+
+    def clamp_pct(val, default):
+        try:
+            return max(10, min(100, int(val)))
+        except Exception:
+            return default
+
+    if parsed and isinstance(parsed, dict):
+        fin_overall = clamp_pct(parsed.get("overall_score"), overall_pct)
+        return {
+            "overall_score": fin_overall,
+            "technical_knowledge": clamp_pct(parsed.get("technical_knowledge"), fin_overall),
+            "communication": clamp_pct(parsed.get("communication"), fin_overall),
+            "relevance": clamp_pct(parsed.get("relevance"), fin_overall),
+            "completeness": clamp_pct(parsed.get("completeness"), fin_overall),
+            "problem_solving": clamp_pct(parsed.get("problem_solving"), fin_overall),
+            "category_scores": {
+                "Technical Knowledge": clamp_pct(parsed.get("technical_knowledge"), fin_overall),
+                "Communication": clamp_pct(parsed.get("communication"), fin_overall),
+                "Relevance": clamp_pct(parsed.get("relevance"), fin_overall),
+                "Completeness": clamp_pct(parsed.get("completeness"), fin_overall),
+                "Problem Solving": clamp_pct(parsed.get("problem_solving"), fin_overall),
+            },
+            "strong_areas": parsed.get("strengths", [
+                "Demonstrated domain understanding of machine learning and modern software tools.",
+                "Articulated practical system components and design rationale."
+            ]),
+            "improvement_areas": parsed.get("improvement_areas", [
+                "Incorporate quantifiable business impact and benchmark metrics into explanations.",
+                "Explain architectural tradeoffs and alternative implementations in greater depth."
+            ]),
+            "topics_to_practice": parsed.get("topics_to_practice", [
+                "System architecture, vector database indexing, and latency benchmarking.",
+                "STAR method response structuring for open-ended technical questions."
+            ]),
+            "recommendations": parsed.get("topics_to_practice", [
+                "Deep-dive into production deployment constraints and latency optimization.",
+                "Practice STAR-structured answers for technical system walkthroughs."
+            ]),
+            "practice_questions": [
+                "Explain the end-to-end retrieval and generation cycle in your RAG pipeline.",
+                "How do you handle model drift, monitoring, and automated retraining in production?"
+            ],
+            "final_feedback": parsed.get("personalized_feedback", (
+                f"Candidate achieved an overall score of {fin_overall}%. Exhibited solid foundational knowledge "
+                "with strong potential to excel by detailing system bottlenecks, latency tradeoffs, and quantifiable results."
+            ))
+        }, None
+
+    # Fallback when LLM is unavailable
+    tech_score = clamp_pct(int(overall_pct * 1.02), overall_pct)
+    comm_score = clamp_pct(int(overall_pct * 0.98), overall_pct)
+    rel_score = clamp_pct(overall_pct, overall_pct)
+    comp_score = clamp_pct(int(overall_pct * 0.95), overall_pct)
+    ps_score = clamp_pct(overall_pct, overall_pct)
+
+    return {
+        "overall_score": overall_pct,
+        "technical_knowledge": tech_score,
+        "communication": comm_score,
+        "relevance": rel_score,
+        "completeness": comp_score,
+        "problem_solving": ps_score,
+        "category_scores": {
+            "Technical Knowledge": tech_score,
+            "Communication": comm_score,
+            "Relevance": rel_score,
+            "Completeness": comp_score,
+            "Problem Solving": ps_score,
+        },
+        "strong_areas": [
+            "Demonstrated domain awareness of core programming concepts and system architectures.",
+            "Navigated technical discussion with relevant domain vocabulary."
+        ],
+        "improvement_areas": [
+            "Quantify results with precision metrics, latency benchmarks, or user adoption stats.",
+            "Explain architectural tradeoffs and why specific alternatives were rejected."
+        ],
+        "topics_to_practice": [
+            "RAG indexing strategies, chunking mechanisms, and vector database evaluation.",
+            "System design, API concurrency, and containerized deployment pipelines."
+        ],
+        "recommendations": [
+            "Structure answers strictly with the STAR format (Situation, Task, Action, Result).",
+            "Prepare detailed trade-off justifications for all tools listed on your resume."
+        ],
+        "practice_questions": [
+            "How do you evaluate retrieval precision and prevent hallucinations in production?",
+            "What strategies do you use for profiling latency bottlenecks in AI applications?"
+        ],
+        "final_feedback": (
+            f"Overall performance evaluated at {overall_pct}%. Candidate demonstrates good grasp of core concepts. "
+            "Focus on quantifying project outcomes and discussing trade-offs to stand out to senior technical interviewers."
+        )
+    }, None
