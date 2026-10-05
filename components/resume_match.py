@@ -597,3 +597,49 @@ def _display_match_results(result: dict, resume_info: dict):
                 <span style="color:#1E293B; font-size:0.88rem;">{rec}</span>
             </div>
             """, unsafe_allow_html=True)
+
+    # ── Next Action: Proceed to Mock Interview (Requirement 9 & 10) ───────────
+    st.markdown("<div style='margin-top:2rem;'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg, #ECFDF5 0%, #F0FDF4 100%); border:1.5px solid #A7F3D0;
+                border-left:5px solid #059669; border-radius:16px; padding:1.6rem 2rem; margin-bottom:1rem;
+                box-shadow:0 2px 6px rgba(0,0,0,0.02);">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.8rem;">
+            <div>
+                <div style="display:inline-flex; align-items:center; gap:6px; background:#FFFFFF; border:1px solid #A7F3D0;
+                            padding:3px 12px; border-radius:14px; font-size:0.75rem; font-weight:700; color:#065F46; margin-bottom:0.4rem;">
+                    <span>🎥</span> Next Step: AI Video Mock Interview
+                </div>
+                <h3 style="color:#0F241A; margin:0 0 0.25rem; font-size:1.35rem; font-weight:800;">
+                    Ready to practice for this role?
+                </h3>
+                <p style="color:#475569; font-size:0.88rem; margin:0; line-height:1.5;">
+                    Transfer your resume profile, matching skills ({len(matching_skills)} skills), and target job description directly into a real-time conversational AI interview session.
+                </p>
+            </div>
+            <span style="background:#059669; color:#FFFFFF; font-size:0.82rem; font-weight:700; padding:6px 14px; border-radius:12px;">
+                Match Score: {match_score}%
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🚀 Proceed to Live AI Mock Interview →", type="primary", use_container_width=True, key="btn_proceed_to_mock_interview"):
+        # Transfer all 9 context fields into session state
+        st.session_state["resume_info"] = resume_info
+        st.session_state["resume_data"] = resume_info
+        st.session_state["resume_text"] = resume_info.get("_raw_text", "")
+        st.session_state["extracted_skills"] = resume_info.get("skills", [])
+        st.session_state["candidate_projects"] = resume_info.get("projects", [])
+        st.session_state["job_description"] = job_description
+        st.session_state["global_job_description"] = job_description
+        st.session_state["target_role"] = role_title
+        st.session_state["match_score"] = match_score
+        st.session_state["match_analysis"] = match_result
+        st.session_state["match_result"] = match_result
+        st.session_state["matching_skills"] = matching_skills
+        st.session_state["missing_skills"] = missing_skills
+        st.session_state["skill_gaps"] = missing_skills
+        st.session_state["current_page"] = "Mock Interview"
+        st.session_state["interview_state"] = "setup"
+        st.rerun()

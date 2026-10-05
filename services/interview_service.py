@@ -169,31 +169,35 @@ def generate_initial_interview_question(resume_info: dict, job_description: str 
     first_proj = projects[0] if projects else None
     role = target_role or "AI/ML Software Engineer"
 
-    system_prompt = """You are a seasoned hiring manager and lead technical interviewer.
-Craft a warm, professional, and personalized opening interview question.
-Reference the candidate's actual projects or skills. Never generate a generic placeholder.
+    system_prompt = """You are JobShield AI's lead technical interviewer conducting a live video-call mock interview.
+Craft a warm, professional, and personalized opening greeting and first question.
+You MUST greet the candidate by their name, reference the target role and their skills, and invite them to discuss their featured project.
+Never use a generic placeholder or hardcode any fake candidate name.
 Return valid JSON only."""
 
-    prompt = f"""Generate the OPENING (First) interview question for this candidate:
+    prompt = f"""Generate the OPENING (First) spoken greeting and question for this candidate:
 
 CANDIDATE:
 Name: {name}
 Target Role: {role}
-Featured Project: {first_proj or "Not specified"}
+Featured Project: {first_proj or "Technical project from resume"}
 All Projects: {', '.join(projects[:3]) if projects else "None listed"}
-Key Skills: {', '.join(skills[:8])}
+Key Skills: {', '.join(skills[:6])}
 
 TARGET JOB DESCRIPTION:
-{truncate_text(job_description, 1000) if job_description else "General AI/ML Engineering position"}
+{truncate_text(job_description, 800) if job_description else role}
 
 INSTRUCTIONS:
-1. Open warmly and invite the candidate to dive into their most impressive project or technical experience.
-2. If they have a project like '{first_proj}', ask them to explain its objective, architecture, and technology stack.
-3. Return JSON in this exact structure:
+1. Greet the candidate warmly by their exact name: "{name}".
+2. State that you reviewed their resume and the "{role}" role they are targeting.
+3. Mention that you noticed their experience in {', '.join(skills[:3]) if skills else 'modern AI tools'}.
+4. Ask them an opening technical question about their project "{first_proj or 'technical background'}" (e.g., what core problem they were solving, their architecture, or key technical challenge).
+5. Keep it natural, conversational, and suitable to be spoken aloud.
+6. Return JSON in this exact structure:
 {{
-  "question": "The actual spoken opening question text",
-  "category": "Resume-Based" or "Technical",
-  "focus_area": "Project Architecture & Core Technical Problem"
+  "question": "Hi {name}. I reviewed your resume and the {role} role you're targeting. I noticed that you have experience with {', '.join(skills[:3]) if skills else 'AI and software engineering'}. Let's start with your {first_proj or 'featured project'} project. Could you explain the main problem you were trying to solve and how your architecture addresses it?",
+  "category": "Resume-Based",
+  "focus_area": "Project Architecture & Problem Solving"
 }}
 """
 
@@ -208,18 +212,18 @@ INSTRUCTIONS:
             "focus_area": parsed.get("focus_area", "Project Overview")
         }, None
 
-    # Fallback opening question referencing actual candidate project
+    # Dynamic fallback greeting and question (Requirement 10)
+    top_skills_str = ', '.join(skills[:3]) if skills else "Python and machine learning"
     if first_proj:
-        q_text = f"Welcome! To start our interview, could you walk me through your '{first_proj}' project? What was the core problem you were solving, and what architecture and technologies did you choose?"
+        q_text = f"Hi {name}. I reviewed your resume and the {role} role you're targeting. I noticed that you have experience with {top_skills_str}. Let's start with your '{first_proj}' project. Could you explain the main problem you were trying to solve and the architecture you designed?"
     else:
-        top_skill = skills[0] if skills else "Python"
-        q_text = f"Welcome! To start our interview for the {role} position, could you walk me through a complex technical system or model you built recently using {top_skill}?"
+        q_text = f"Hi {name}. I reviewed your profile for the {role} position. I see strong foundations in {top_skills_str}. Could you tell me about a recent technical system you built and the main problem it was designed to solve?"
 
     return {
         "id": 1,
         "question": q_text,
         "category": "Resume-Based",
-        "focus_area": "Technical Architecture & Problem Solving"
+        "focus_area": "Project Architecture & Problem Solving"
     }, None
 
 
