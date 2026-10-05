@@ -34,3 +34,12 @@ Thumbs.db
 # Uploads (temp files)
 uploads/
 temp/
+
+# Local databases
+data/*.db
+data/users.db
+*.db
+*.sqlite3
+
+# Pytest
+.pytest_cache/

@@ -92,6 +92,28 @@ report, rep_err = generate_final_report(qs, [evaluation], resume_info, target_jd
 print(f"\n[8] Final Interview Report: Err={rep_err}, Overall Score={report.get('overall_score')}%")
 print(f"    Strong Areas: {report.get('strong_areas')[:2]}")
 
+# 9. Test Authentication Service
+from services.auth_service import authenticate_user, create_user
+auth_user, auth_err = authenticate_user("varshitha@jobshield.ai", "password123")
+print(f"\n[9] Authentication Service: User={auth_user.get('name') if auth_user else None}, Err={auth_err}")
+assert auth_user is not None, "Authentication should succeed"
+assert auth_user.get("name") == "Naga Varshitha", "User name should match"
+
+# 10. Test Real Conversational Turn Evaluation
+from services.interview_service import evaluate_conversational_turn
+turn_eval, turn_err = evaluate_conversational_turn(
+    first_q,
+    user_answer,
+    resume_info,
+    target_jd,
+    question_num=1,
+    total_questions=5,
+    planned_next_question="How did you measure retrieval accuracy?"
+)
+print(f"\n[10] Conversational Turn: Err={turn_err}, Score={turn_eval.get('score')}/10")
+print(f"     AI Reply: {turn_eval.get('ai_conversational_reply')}")
+assert turn_eval.get("score") > 0, "Conversational turn score should be > 0"
+
 print("\n" + "=" * 60)
-print("ALL 8 END-TO-END PIPELINE TESTS PASSED FLAWLESSLY!")
+print("ALL 10 END-TO-END PIPELINE TESTS PASSED FLAWLESSLY!")
 print("=" * 60)

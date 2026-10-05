@@ -148,3 +148,27 @@ def call_groq(prompt: str, system_prompt: str = "", model: str = DEFAULT_MODEL,
                 return None, f"Groq API error: {error_msg}"
 
     return None, f"Groq API error: {last_error or 'All candidate models failed'}"
+
+
+def transcribe_audio_groq(audio_file) -> tuple[str | None, str | None]:
+    """
+    Transcribe audio recording using Groq's whisper-large-v3 model.
+    Accepts file object, BytesIO, or path.
+    Returns (transcript_text, error_message).
+    """
+    client, error = get_groq_client()
+    if error:
+        return None, error
+
+    try:
+        transcription = client.audio.transcriptions.create(
+            file=audio_file,
+            model="whisper-large-v3",
+            response_format="text"
+        )
+        text = str(transcription).strip() if transcription else ""
+        if text:
+            return text, None
+        return None, "No speech detected in audio."
+    except Exception as e:
+        return None, f"Speech-to-text error: {str(e)}"

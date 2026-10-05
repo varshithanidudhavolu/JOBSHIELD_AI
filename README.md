@@ -8,10 +8,11 @@ JobShield AI helps job seekers and college students verify the authenticity of j
 
 ## Features
 
+- **Secure Authentication & User Management**: Built-in local authentication with PBKDF2-HMAC-SHA256 password hashing and salt. Dynamic user profiles, protected routes, and session control.
 - **Job Risk & Scam Detection**: Heuristic + Groq LLM evaluation of job postings to detect registration fees, payment requests, unrealistic salaries, urgent pressure, and contact fraud. Generates Risk Levels (LOW / MEDIUM / HIGH), 0–100 risk score, red flags, and verification checklists.
 - **OpenCV + OCR Resume Analyzer**: Computer vision image preprocessing (Grayscale, Gaussian blur, adaptive thresholding, morphological operations, deskewing) and OCR extraction for PDF and image resumes. Extracts Candidate Name, Email, Phone, Skills, Education, Experience, Projects, and Certifications.
 - **Resume–Job Match & Skill Gap Analysis**: Semantic comparison of candidate profiles against job specifications. Generates match scores (0–100%), matching skills, and prioritizes missing skill gaps (High / Medium / Low) with actionable learning recommendations.
-- **AI Mock Interview using Groq**: Tailored technical and behavioral interview preparation citing candidate resume projects (e.g. *AI Contract Intelligence*) and job requirements, featuring video/webcam preview, real-time STAR evaluation, scoring, and comprehensive final performance report cards.
+- **Real Conversational AI Mock Interview**: 5-question dynamic technical interview powered by Groq LLM. Features live microphone speech-to-text, Groq Whisper STT fallback, browser text-to-speech (TTS), visual interview camera preview, real-time conversational feedback, and a comprehensive final performance report card.
 
 ---
 

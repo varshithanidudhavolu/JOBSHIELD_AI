@@ -249,6 +249,7 @@ try:
     from components.risk_analysis import render_risk_analysis
     from components.resume_match import render_resume_analyzer, render_resume_match
     from components.mock_interview import render_mock_interview
+    from components.auth import render_auth_page, logout_user
 except ImportError as e:
     st.error(f"❌ Import error: {e}. Please ensure all components are in place.")
     st.stop()
@@ -258,6 +259,11 @@ except ImportError as e:
 def _init_session_state():
     """Ensure all required session state keys are persistently initialized."""
     defaults = {
+        "logged_in": False,
+        "user_id": None,
+        "user_name": "",
+        "user_email": "",
+        "auth_mode": "login",
         "current_page": "Dashboard",
         "job_description": "",
         "global_job_description": "",
@@ -312,34 +318,56 @@ def navigate_to(page: str):
 
 # ── Topbar Component ───────────────────────────────────────────────────────
 def _render_topbar():
-    """Render HireLens-inspired top navigation bar with breadcrumb and candidate profile."""
+    """Render HireLens-inspired top navigation bar with breadcrumb, dynamic candidate profile and logout."""
     current_page = st.session_state.get("current_page", "Dashboard")
-    
-    st.markdown(f"""
-    <div class="topbar-container">
-        <div class="topbar-breadcrumb">
-            <span style="color:#64748B;">JobShield AI</span>
+    user_name = st.session_state.get("user_name", "Candidate")
+    user_email = st.session_state.get("user_email", "")
+
+    # Initials
+    parts = user_name.strip().split()
+    initials = "".join([p[0].upper() for p in parts[:2]]) if parts else "US"
+
+    tb_left, tb_right = st.columns([2.6, 1.4])
+
+    with tb_left:
+        st.markdown(f"""
+        <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:0.65rem 1.1rem;
+                    box-shadow:0 1px 3px rgba(0,0,0,0.02); display:flex; align-items:center; gap:6px;">
+            <span style="color:#64748B; font-size:0.88rem; font-weight:600;">JobShield AI</span>
             <span style="color:#CBD5E1;">/</span>
-            <span class="active">{current_page}</span>
+            <span style="color:#047857; font-size:0.88rem; font-weight:700;">{current_page}</span>
         </div>
-        <div class="topbar-user">
-            <div class="topbar-user-info">
-                <div class="topbar-user-name">Naga Varshitha</div>
-                <div class="topbar-user-role">AI/ML Student &bull; Candidate</div>
+        """, unsafe_allow_html=True)
+
+    with tb_right:
+        u_info_col, u_btn_col = st.columns([2.2, 1])
+        with u_info_col:
+            st.markdown(f"""
+            <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; padding-top:4px;">
+                <div style="text-align:right; line-height:1.2;">
+                    <div style="font-size:0.86rem; font-weight:700; color:#0F241A;">👤 {user_name}</div>
+                    <div style="font-size:0.72rem; color:#64748B;">{user_email}</div>
+                </div>
+                <div style="width:34px; height:34px; border-radius:50%; background:#E6F4EA; border:1.5px solid #10B981;
+                            color:#065F46; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.82rem;">
+                    {initials}
+                </div>
             </div>
-            <div class="topbar-avatar">NV</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        with u_btn_col:
+            if st.button("Logout", key="btn_topbar_logout", use_container_width=True):
+                logout_user()
+
+    st.markdown("<div style='margin-bottom:0.8rem;'></div>", unsafe_allow_html=True)
 
 
 # ── Sidebar Navigation with Pure Button Implementation (No Radio) ──────────
 def _render_sidebar():
-    """Render persistent left sidebar with branding, button navigation, session state & AI status."""
+    """Render persistent left sidebar with branding, dynamic user profile, button navigation, session state & AI status."""
     with st.sidebar:
         # JobShield AI Logo & Brand
         st.markdown("""
-        <div style="text-align:center; padding: 1rem 0 0.8rem;">
+        <div style="text-align:center; padding: 1rem 0 0.5rem;">
             <div style="display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px;
                         background:rgba(16,185,129,0.2); border:1.5px solid #10B981; border-radius:14px; margin-bottom:0.5rem;">
                 <span style="font-size:1.8rem;">🛡️</span>
@@ -351,7 +379,18 @@ def _render_sidebar():
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown('<hr style="border-color:rgba(255,255,255,0.12); margin:0.3rem 0 0.8rem;">', unsafe_allow_html=True)
+        # Dynamic Logged-in User Badge in Sidebar
+        user_name = st.session_state.get("user_name", "Candidate")
+        user_email = st.session_state.get("user_email", "")
+        st.markdown(f"""
+        <div style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14);
+                    border-radius:10px; padding:0.55rem 0.8rem; margin:0.4rem 0 0.8rem;">
+            <div style="font-size:0.82rem; font-weight:700; color:#FFFFFF;">👤 {user_name}</div>
+            <div style="font-size:0.68rem; color:#A7F3D0; overflow:hidden; text-overflow:ellipsis;">{user_email}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('<hr style="border-color:rgba(255,255,255,0.12); margin:0.2rem 0 0.8rem;">', unsafe_allow_html=True)
 
         # ── Navigation Buttons ──
         current = st.session_state.get("current_page", "Dashboard")
@@ -484,6 +523,10 @@ def _render_sidebar():
                     st.session_state["confirm_clear_session"] = False
                     st.rerun()
 
+        st.markdown("<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True)
+        if st.button("🚪 Sign Out", key="btn_sidebar_logout", use_container_width=True):
+            logout_user()
+
         st.markdown("""
         <div style="color:#A7F3D0 !important; opacity:0.85; font-size:0.72rem; text-align:center; margin-top:1.2rem;">
             JobShield AI &bull; Tech Expo Edition<br>
@@ -494,6 +537,11 @@ def _render_sidebar():
 
 # ── Main Application Router ────────────────────────────────────────────────
 def main():
+    # Login protection: Require authentication before accessing platform
+    if not st.session_state.get("logged_in", False):
+        render_auth_page()
+        return
+
     _render_sidebar()
     _render_topbar()
 

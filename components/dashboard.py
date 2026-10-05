@@ -11,21 +11,26 @@ from services.groq_service import is_api_configured, test_groq_connection
 def render_dashboard():
     """Render the main landing/home dashboard."""
 
+    user_name = st.session_state.get("user_name", "Candidate")
+
     # ── Hero Section (HireLens Clean Career Platform Style) ─────────────────────
-    st.markdown("""
-    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:16px; padding:2.2rem 1.8rem;
+    st.markdown(f"""
+    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:16px; padding:2rem 1.8rem;
                 margin-bottom:1.8rem; box-shadow:0 1px 3px rgba(0,0,0,0.03); text-align:center;">
         <div style="display:inline-flex; align-items:center; gap:8px; background:#ECFDF5; border:1px solid #A7F3D0;
                     padding:4px 14px; border-radius:20px; font-size:0.8rem; font-weight:700; color:#065F46; margin-bottom:0.8rem;">
             <span>🛡️</span> AI Career Intelligence & Verification Platform
         </div>
-        <h1 style="font-size:2.5rem; font-weight:800; color:#0F241A; margin-bottom:0.35rem; letter-spacing:-0.02em;">
+        <div style="font-size:1.4rem; font-weight:700; color:#0F241A; margin-bottom:0.4rem;">
+            Welcome, {user_name} 👋
+        </div>
+        <h1 style="font-size:2.4rem; font-weight:800; color:#0F241A; margin-bottom:0.35rem; letter-spacing:-0.02em;">
             JobShield AI
         </h1>
-        <p style="font-size:1.15rem; color:#059669; font-weight:600; margin-bottom:0.6rem;">
+        <p style="font-size:1.1rem; color:#059669; font-weight:600; margin-bottom:0.6rem;">
             Analyze. Match. Prepare. Apply with confidence.
         </p>
-        <p style="font-size:0.95rem; color:#475569; max-width:720px; margin:0 auto 1.4rem; line-height:1.6;">
+        <p style="font-size:0.95rem; color:#475569; max-width:720px; margin:0 auto 0.4rem; line-height:1.6;">
             Understand job risks, compare your resume with job requirements, identify skill gaps, and practice personalized interviews using AI.
         </p>
     </div>

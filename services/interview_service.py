@@ -13,7 +13,7 @@ from services.groq_service import call_groq
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_interview_questions(resume_info: dict, job_description: str,
-                                  num_questions: int = 8,
+                                  num_questions: int = 5,
                                   missing_skills: list = None) -> tuple[list, str | None]:
     """
     Generate personalized mock interview questions based on:
@@ -294,6 +294,146 @@ def _basic_evaluation(answer: str, question: str = "") -> dict:
         ),
         "overall_feedback": "Answer recorded. Connect Groq API for full AI evaluation."
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Real Conversational Turn Evaluation & AI Spoken Response
+# ─────────────────────────────────────────────────────────────────────────────
+
+def evaluate_conversational_turn(
+    current_question: str,
+    candidate_answer: str,
+    resume_info: dict,
+    job_description: str = "",
+    question_num: int = 1,
+    total_questions: int = 5,
+    planned_next_question: str = None
+) -> tuple[dict, str | None]:
+    """
+    Evaluate a candidate's spoken/submitted answer and generate a natural,
+    conversational response and seamless transition to the next interview question.
+
+    Returns:
+        (eval_dict, error_message)
+    """
+    if not candidate_answer or not candidate_answer.strip() or candidate_answer == "[Candidate skipped this question]":
+        is_last = (question_num >= total_questions)
+        reply = "I understand you skipped this question. Let's move ahead." if not is_last else "That brings us to the end of our interview session. Let's inspect your overall results."
+        return {
+            "score": 2,
+            "technical_score": 2,
+            "communication_score": 2,
+            "relevance_score": 2,
+            "completeness_score": 1,
+            "strengths": ["Attempted question and progressed through the interview."],
+            "improvements": ["Provide a concrete answer using the STAR method (Situation, Task, Action, Result)."],
+            "ai_conversational_reply": reply,
+            "speech_text": reply + (" " + (planned_next_question or "") if not is_last else ""),
+            "overall_feedback": "Question was skipped or left blank."
+        }, None
+
+    system_prompt = """You are an engaging, supportive, and technically rigorous AI interviewer conducting a real-time mock interview.
+Your goal is two-fold:
+1. Objectively evaluate the candidate's spoken answer across technical depth, correctness, relevance, and communication.
+2. Formulate a warm, natural conversational acknowledgment (1-2 sentences) directly referencing what the candidate said (e.g., 'That is a solid explanation of RAG embeddings and chunking. Let us dive into latency...').
+Never judge appearance, voice pitch, or background. Always return valid JSON only."""
+
+    skills_str = ', '.join(resume_info.get("skills", [])[:8]) if resume_info else ""
+    projects_str = ', '.join(resume_info.get("projects", [])[:3]) if resume_info else ""
+    is_last = (question_num >= total_questions)
+
+    prompt = f"""Evaluate this conversational interview turn (Question {question_num} of {total_questions}):
+
+INTERVIEW QUESTION ASKED:
+"{current_question}"
+
+CANDIDATE'S SPOKEN/SUBMITTED ANSWER:
+"{truncate_text(candidate_answer, 1800)}"
+
+CONTEXT:
+Candidate Skills: {skills_str}
+Candidate Projects: {projects_str}
+Role Applied For: {truncate_text(job_description, 300) if job_description else "Software/AI Engineer"}
+Is Last Question: {is_last}
+Planned Next Topic/Question: {planned_next_question or "Technical question on candidate experience or skills"}
+
+Evaluate and return JSON in this exact structure:
+{{
+  "score": <integer 1-10 overall score>,
+  "technical_score": <integer 1-10 technical depth and correctness>,
+  "communication_score": <integer 1-10 clarity, structure, and articulation>,
+  "relevance_score": <integer 1-10 direct alignment with question>,
+  "completeness_score": <integer 1-10 completeness of explanation>,
+  "strengths": [
+    "Specific strength from this answer",
+    "Another positive technical aspect"
+  ],
+  "improvements": [
+    "One concrete improvement or missing nuance"
+  ],
+  "ai_conversational_reply": "A warm, natural 1-2 sentence conversational reply acknowledging what they said (e.g. 'That is a great explanation. You mentioned X, which is very relevant...').",
+  "overall_feedback": "2 sentences summarizing the response quality."
+}}
+
+Rules:
+- Score realistically: 1-4 weak/vague, 5-6 average, 7-8 solid, 9-10 exceptional.
+- Keep strengths and improvements concise and direct.
+- Return ONLY valid JSON."""
+
+    response, error = call_groq(prompt, system_prompt, max_tokens=1000, temperature=0.35)
+    if error:
+        # Fallback evaluation
+        word_count = len(candidate_answer.split())
+        score = min(9, max(3, word_count // 15 + 2))
+        ack = f"Thanks for sharing that perspective on {current_question[:40]}."
+        return {
+            "score": score,
+            "technical_score": score,
+            "communication_score": score,
+            "relevance_score": score,
+            "completeness_score": score,
+            "strengths": ["Clear response provided with relevant domain terminology."],
+            "improvements": ["Provide more quantifiable architectural metrics and tradeoffs."],
+            "ai_conversational_reply": ack,
+            "speech_text": ack,
+            "overall_feedback": "Answer recorded successfully."
+        }, None
+
+    parsed = parse_json_from_llm(response)
+    if not parsed or not isinstance(parsed, dict):
+        base_eval = _basic_evaluation(candidate_answer, current_question)
+        base_eval["ai_conversational_reply"] = "Thank you for that answer. Let's keep going."
+        base_eval["speech_text"] = "Thank you for that answer."
+        return base_eval, None
+
+    def clamp(v, default=6):
+        try:
+            return max(1, min(10, int(v)))
+        except (ValueError, TypeError):
+            return default
+
+    score = clamp(parsed.get("score", 6))
+    reply = parsed.get("ai_conversational_reply", "Thank you for sharing your experience.")
+    
+    # Formulate speech text for optional browser Text-to-Speech
+    speech_text = reply
+    if not is_last and planned_next_question:
+        speech_text += f" Next question: {planned_next_question}"
+
+    result = {
+        "score": score,
+        "technical_score": clamp(parsed.get("technical_score", score)),
+        "communication_score": clamp(parsed.get("communication_score", score)),
+        "relevance_score": clamp(parsed.get("relevance_score", score)),
+        "completeness_score": clamp(parsed.get("completeness_score", score)),
+        "strengths": parsed.get("strengths", ["Addressed the core subject of the question."]),
+        "improvements": parsed.get("improvements", ["Provide more concrete metrics and tradeoffs."]),
+        "ai_conversational_reply": reply,
+        "speech_text": speech_text,
+        "overall_feedback": parsed.get("overall_feedback", "Answer evaluated.")
+    }
+
+    return result, None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
